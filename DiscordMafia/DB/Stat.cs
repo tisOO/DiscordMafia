@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using Microsoft.Data.Sqlite;
 using System.Linq;
 using DiscordMafia.Client;
+using Microsoft.EntityFrameworkCore;
 
 namespace DiscordMafia.DB
 {
@@ -15,22 +15,44 @@ namespace DiscordMafia.DB
 
         public static IEnumerable<User> GetTop(string field, int howMany = 20)
         {
+            howMany = Math.Min(Math.Max(howMany, 1), 300);
             if (!allowedFields.Contains(field))
             {
                 field = allowedFields.First();
             }
-            howMany = Math.Min(Math.Max(howMany, 1), 300);
-            var parameters = new SqliteParameter[] { new SqliteParameter(":limit", howMany) };
-            return User.FindAllByCondition($"ORDER BY {field} DESC LIMIT :limit", parameters);
+            using (var context = new GameContext())
+            {
+                var dbUsers = context.Users.AsNoTracking().Take(howMany);
+                switch (field)
+                {
+                    case "total_points":
+                        dbUsers = dbUsers.OrderByDescending(u => u.TotalPoints);
+                        break;
+                    case "rate":
+                        dbUsers = dbUsers.OrderByDescending(u => u.Rate);
+                        break;
+                    case "games":
+                        dbUsers = dbUsers.OrderByDescending(u => u.GamesPlayed);
+                        break;
+                    case "wins":
+                        dbUsers = dbUsers.OrderByDescending(u => u.Wins);
+                        break;
+                }
+
+                return dbUsers.ToList();
+            }
         }
 
         public static void RecalculateAll()
         {
-            var users = User.FindAllByCondition($"", new SqliteParameter[0]);
-            foreach (var user in users)
+            using (var context = new GameContext())
             {
-                user.RecalculateStats();
-                user.Save();
+                var dbUsers = context.Users.ToList();
+                foreach (var user in dbUsers)
+                {
+                    user.RecalculateStats();
+                }
+                context.SaveChanges();
             }
         }
 
@@ -54,17 +76,20 @@ namespace DiscordMafia.DB
 
         public static string GetStatAsString(UserWrapper user)
         {
-            var dbUser = User.FindById(user.Id);
-            var winsPercent = dbUser.GamesPlayed > 0 ? 100.0 * dbUser.Wins / dbUser.GamesPlayed : 0.0;
-            var survivalsPercent = dbUser.GamesPlayed > 0 ? 100.0 * dbUser.Survivals / dbUser.GamesPlayed : 0.0;
-            var pointsAverage = dbUser.GamesPlayed > 0 ? 1.0 * dbUser.TotalPoints / dbUser.GamesPlayed : 0.0;
-            var message = "Ваша статистика:" + Environment.NewLine;
-            message += $"Всего игр: {dbUser.GamesPlayed}{Environment.NewLine}";
-            message += $"Пережил игр: {dbUser.Survivals} ({survivalsPercent.ToString("0.00")}%){Environment.NewLine}";
-            message += $"Побед: {dbUser.Wins} ({winsPercent.ToString("0.00")}%){Environment.NewLine}";
-            message += $"Очков: {dbUser.TotalPoints} (в среднем за игру {pointsAverage.ToString("0.00")}){Environment.NewLine}";
-            message += $"Рейтинг: {dbUser.Rate.ToString("0.00")}{Environment.NewLine}";
-            return message;
+            using (var context = new GameContext())
+            {
+                var dbUser = context.Users.AsNoTracking().Single(u => u.Id == user.Id);
+                var winsPercent = dbUser.GamesPlayed > 0 ? 100.0 * dbUser.Wins / dbUser.GamesPlayed : 0.0;
+                var survivalsPercent = dbUser.GamesPlayed > 0 ? 100.0 * dbUser.Survivals / dbUser.GamesPlayed : 0.0;
+                var pointsAverage = dbUser.GamesPlayed > 0 ? 1.0 * dbUser.TotalPoints / dbUser.GamesPlayed : 0.0;
+                var message = "Ваша статистика:" + Environment.NewLine;
+                message += $"Всего игр: {dbUser.GamesPlayed}{Environment.NewLine}";
+                message += $"Пережил игр: {dbUser.Survivals} ({survivalsPercent:0.00}%){Environment.NewLine}";
+                message += $"Побед: {dbUser.Wins} ({winsPercent:0.00}%){Environment.NewLine}";
+                message += $"Очков: {dbUser.TotalPoints} (в среднем за игру {pointsAverage:0.00}){Environment.NewLine}";
+                message += $"Рейтинг: {dbUser.Rate:0.00}{Environment.NewLine}";
+                return message;
+            }   
         }
     }
 }

@@ -13,6 +13,7 @@ using DiscordMafia.Roles.Places;
 using DiscordMafia.Voting;
 using DiscordMafia.DB;
 using DiscordMafia.Lib;
+using Microsoft.EntityFrameworkCore;
 
 namespace DiscordMafia
 {
@@ -732,7 +733,7 @@ namespace DiscordMafia
             if (currentState == GameState.PlayerCollecting && !currentPlayers.ContainsKey(player.Id))
             {
                 var playerInfo = new InGamePlayerInfo(player, this);
-                playerInfo.DbUser.Save();
+                DB.User.TryToSave(playerInfo.DbUser);
                 playerInfo.IsBot = isBot;
                 currentPlayers.Add(player.Id, playerInfo);
                 playersList.Add(playerInfo);
@@ -2076,36 +2077,41 @@ namespace DiscordMafia
             Console.WriteLine("Победила команда {0}", team);
             Pause();
 
-            foreach (var player in playersList)
+            using (var gameContext = new GameContext())
             {
-                if (player.IsAlive)
+                foreach (var player in playersList)
                 {
-                    if (team == player.Role.Team)
+                    if (player.IsAlive)
                     {
-                        player.AddPoints("WinAndSurvive");
+                        if (team == player.Role.Team)
+                        {
+                            player.AddPoints("WinAndSurvive");
+                        }
+                        else if (team == Team.None)
+                        {
+                            player.AddPoints("Draw");
+                            player.DbUser.Draws++;
+                        }
+                        else if (player.Role.Team == Team.Neutral)
+                        {
+                            // К победе присоединяется нейтральный персонаж как к ничьей
+                            player.AddPoints("Draw");
+                            player.DbUser.Draws++;
+                        }
+                        player.AddPoints("Survive");
+                        player.DbUser.Survivals++;
                     }
-                    else if (team == Team.None)
+                    if (team == player.StartRole.Team)
                     {
-                        player.AddPoints("Draw");
-                        player.DbUser.Draws++;
+                        player.AddPoints("Win");
+                        player.DbUser.Wins++;
                     }
-                    else if (player.Role.Team == Team.Neutral)
-                    {
-                        // К победе присоединяется нейтральный персонаж как к ничьей
-                        player.AddPoints("Draw");
-                        player.DbUser.Draws++;
-                    }
-                    player.AddPoints("Survive");
-                    player.DbUser.Survivals++;
+                    player.DbUser.GamesPlayed++;
+                    player.DbUser.TotalPoints += player.CurrentGamePoints;
+                    player.ActualizeDbUser();
+                    gameContext.Entry(player.DbUser).State = EntityState.Modified;
                 }
-                if (team == player.StartRole.Team)
-                {
-                    player.AddPoints("Win");
-                    player.DbUser.Wins++;
-                }
-                player.DbUser.GamesPlayed++;
-                player.DbUser.TotalPoints += player.CurrentGamePoints;
-                player.ActualizeDbUser();
+                gameContext.SaveChanges();
             }
 
             messageBuilder.PrepareText(String.Format("Win_{0}", team)).SendPublic(gameChannel);
